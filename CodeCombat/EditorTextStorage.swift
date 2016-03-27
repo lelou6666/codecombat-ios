@@ -11,70 +11,184 @@ import UIKit
 //Thank you http://www.objc.io/issue-5/getting-to-know-textkit.html
 
 class EditorTextStorage: NSTextStorage {
-  var attributedString:NSMutableAttributedString?
+  var attributedStringStore:NSMutableAttributedString
   var languageProvider = LanguageProvider()
   var highlighter:NodeHighlighter!
   let language = "python"
+  let undoManager = NSUndoManager()
+  var nestedEditingLevel = 0
+  var makingTextClear = false
+  
   override init() {
+    attributedStringStore = NSMutableAttributedString()
     super.init()
-    attributedString = NSMutableAttributedString()
-    let parser = LanguageParser(scope: language, data: attributedString!.string, provider: languageProvider)
+    let parser = LanguageParser(scope: language, data: attributedStringStore.string, provider: languageProvider)
     highlighter = NodeHighlighter(parser: parser)
   }
   
-  required init(coder aDecoder: NSCoder) {
+  required init?(coder aDecoder: NSCoder) {
+    attributedStringStore = NSMutableAttributedString()
     super.init(coder: aDecoder)
+    let parser = LanguageParser(scope: language, data: attributedStringStore.string, provider: languageProvider)
+    highlighter = NodeHighlighter(parser: parser)
   }
   
-  func string() -> NSString? {
-    return attributedString!.string
+  override var string: String {
+    return attributedStringStore.string
   }
   
-  
-  override func attributesAtIndex(location: Int, effectiveRange range: NSRangePointer) -> [NSObject : AnyObject] {
-    var attributes = attributedString!.attributesAtIndex(location, effectiveRange: range)
-    return attributes
+  override func beginEditing() {
+    nestedEditingLevel++
+    super.beginEditing()
+  }
+  override func endEditing() {
+    super.endEditing()
+    //If you need to do things which require laying out glyphs, do them here. If you trigger them
+    //before, you'll crash.
+    //Not counting clearing text as an edit per se, we shouldn't highlight if just doing that
+    if nestedEditingLevel == 1 && !makingTextClear {
+      NSNotificationCenter.defaultCenter().postNotificationName("textStorageFinishedTopLevelEditing", object: nil)
+      highlightSyntax()
+    }
+    nestedEditingLevel--
   }
   
-  func scopeToAttributes(scopeName:String) -> [NSObject : AnyObject]? {
-    let scopes = scopeName.componentsSeparatedByString(" ")
-    if contains(scopes, "comment") {
-      return [NSForegroundColorAttributeName:UIColor.redColor()]
+  func characterIsPartOfString(characterIndex:Int) -> Bool {
+    let scopeName = highlighter.scopeName(characterIndex)
+    let node = highlighter.lastScopeNode
+    if node == nil {
+      return false
+    }
+    return node.name.hasPrefix("string")
+  }
+  
+  //caller is responsible for checking if character is part of string
+  func stringRangeContainingCharacterIndex(characterIndex:Int) -> NSRange {
+    let scopeName = highlighter.scopeName(characterIndex)
+    let node = highlighter.lastScopeNode
+    return node.range
+  }
+  
+  func characterIsPartOfNumber(characterIndex:Int) -> Bool {
+    let scopeName = highlighter.scopeName(characterIndex)
+    let node = highlighter.lastScopeNode
+    if node == nil {
+      return false
+    }
+    return node.name.hasPrefix("constant.numeric")
+  }
+  
+  func findArgumentOverlays() -> [(String,NSRange)] {
+    var argumentOverlays:[(String,NSRange)] = []
+    let documentRange = NSRange(location: 0, length: string.characters.count)
+    for var charIndex = documentRange.location; charIndex < NSMaxRange(documentRange); charIndex++ {
+      let scopeName = highlighter.scopeName(charIndex)
+      let scopes = scopeName.componentsSeparatedByString(" ")
+      for scope in scopes {
+        let scopeExtent = highlighter.scopeExtent(charIndex)
+        if scopeExtent == nil {
+          continue
+        }
+        //Identify the function name here
+        if scope.hasPrefix("codecombat.arguments") {
+          //go past the ( and into the function name
+          let parentScopeName = highlighter.scopeName(charIndex - 2)
+          var functionName = "unsetForLanguage\(language)"
+          if language == "python" {
+            let parentNode = highlighter.lastScopeNode
+            if parentNode != nil {
+              if parentNode.name == nil || !parentNode.name.hasPrefix("meta.function-call") {
+                functionName = ""
+              } else {
+                functionName = parentNode.data
+              }
+            }
+          }
+          let argumentOverlayTuple = (functionName, scopeExtent!)
+          argumentOverlays.append(argumentOverlayTuple)
+          charIndex = NSMaxRange(scopeExtent!)
+        }
+      }
+    }
+    return argumentOverlays
+  }
+  
+  func getDefinedVariableNames() -> [String] {
+    var definedVariables:[String] = []
+    //DFS, optimize later
+    var stack:[DocumentNode] = []
+    let rootNode = highlighter.rootNode
+    stack.append(rootNode)
+    while stack.count > 0 {
+      let node = stack.last!
+      stack.removeLast()
+      //This is such a hack
+      if (node.name == nil || node.name == "") && node.data != "loop"{
+        definedVariables.append(node.data)
+      }
+      for child in node.children {
+        stack.append(child)
+      }
+    }
+    definedVariables = removeDuplicatesFromArrayOfStrings(definedVariables)
+    return definedVariables
+  }
+  
+  func getDefinedVariableRanges() -> [NSRange] {
+    var definedVariables:[NSRange] = []
+    //DFS, optimize later
+    var stack:[DocumentNode] = []
+    let rootNode = highlighter.rootNode
+    stack.append(rootNode)
+    while stack.count > 0 {
+      let node = stack.last!
+      stack.removeLast()
+      //This is such a hack
+      if (node.name == nil || node.name == "") && node.data != "loop" {
+        definedVariables.append(node.range)
+      }
+      for child in node.children {
+        stack.append(child)
+      }
+    }
+    return definedVariables
+  }
+  
+  func characterIsPartOfDefinedVariable(characterIndex:Int) -> NSRange? {
+    let definedVariableRanges = getDefinedVariableRanges()
+    for range in definedVariableRanges {
+      if characterIndex >= range.location && characterIndex < range.location + range.length {
+        return range
+      }
     }
     return nil
   }
   
-  override func replaceCharactersInRange(range: NSRange, withString str: String) {
-    attributedString!.replaceCharactersInRange(range, withString: str)
-    //find a more efficient way of getting string length that isn't buggy
-    let changeInLength:NSInteger = (NSString(string: str).length - range.length)
-    self.edited(NSTextStorageEditActions.EditedCharacters,
-      range: range,
-      changeInLength: changeInLength)
+  func removeDuplicatesFromArrayOfStrings(arr:[String]) -> [String] {
+    var extantItems:[String] = []
+    return arr.filter({
+      if !extantItems.contains($0) {
+        extantItems.append($0)
+        return true
+      } else {
+        return false
+      }
+    })
+    
   }
   
-  override func setAttributes(attrs: [NSObject : AnyObject]!, range: NSRange) {
-    attributedString!.setAttributes(attrs, range: range)
-    self.edited(NSTextStorageEditActions.EditedAttributes,
-      range: range,
-      changeInLength: 0)
+  func makeTextClear() {
+    makingTextClear = true
+    addAttribute(NSForegroundColorAttributeName, value: UIColor.clearColor(), range: NSRange(location: 0, length: string.characters.count))
+    makingTextClear = false
   }
   
-  func sendOverlayRequest(metaFunctionCallNode:DocumentNode) {
-    /*println("Function name: \(metaFunctionCallNode.children[0].data)")
-    println("Open bracket: \(metaFunctionCallNode.children[1].children[0].data)")
-    println("Close bracket:\(metaFunctionCallNode.children[1].data)")*/
-  }
-  
-  override func processEditing() {
-    super.processEditing()
-    //NSNotificationCenter.defaultCenter().postNotificationName("eraseParameterBoxes", object: nil, userInfo: nil)
-    let parser = LanguageParser(scope: language, data: attributedString!.string, provider: languageProvider)
+  func highlightSyntax() {
+    let parser = LanguageParser(scope: language, data: attributedStringStore.string, provider: languageProvider)
     highlighter = NodeHighlighter(parser: parser)
     //the most inefficient way of doing this, optimize later
-    let documentRange = NSRange(location: 0, length: string()!.length)
-    println("Edited range loc: \(editedRange.location), length: \(editedRange.length)")
-    println("Document range loc: \(documentRange.location), length: \(documentRange.length)")
+    let documentRange = NSRange(location: 0, length: string.characters.count)
+    
     self.removeAttribute(NSForegroundColorAttributeName, range: documentRange)
     for var charIndex = documentRange.location; charIndex < NSMaxRange(documentRange); charIndex++ {
       let scopeName = highlighter.scopeName(charIndex)
@@ -94,11 +208,54 @@ class EditorTextStorage: NSTextStorage {
           addAttribute(NSForegroundColorAttributeName, value: UIColor.purpleColor(), range: scopeExtent!)
           charIndex = NSMaxRange(scopeExtent!)
         }
-        if scope.hasPrefix("meta.function-call.python") {
-          sendOverlayRequest(highlighter.lastScopeNode)
-        }
-        
       }
     }
+    
+  }
+  
+  override func attributesAtIndex(location: Int, effectiveRange range: NSRangePointer) -> [String : AnyObject] {
+    let attributes = attributedStringStore.attributesAtIndex(location, effectiveRange: range)
+    return attributes
+  }
+  
+  override func replaceCharactersInRange(range: NSRange, withString str: String) {
+    let previousContents = attributedStringStore.attributedSubstringFromRange(range)
+    var newRange = range
+    newRange.length = NSString(string: str).length
+    undoManager.prepareWithInvocationTarget(self).replaceCharactersInRange(newRange, withAttributedString: previousContents)
+    beginEditing()
+    attributedStringStore.replaceCharactersInRange(range, withString: str)
+    let changeInLength:NSInteger = (NSString(string: str).length - range.length)
+    self.edited(NSTextStorageEditActions.EditedCharacters,
+      range: range,
+      changeInLength: changeInLength)
+    endEditing()
+  }
+  
+  override func replaceCharactersInRange(range: NSRange, withAttributedString attrString: NSAttributedString) {
+    let previousContents = attributedStringStore.attributedSubstringFromRange(range)
+    var newRange = range
+    newRange.length = NSString(string: attrString.string).length
+    undoManager.prepareWithInvocationTarget(self).replaceCharactersInRange(newRange, withAttributedString: previousContents)
+    beginEditing()
+    attributedStringStore.replaceCharactersInRange(range, withAttributedString: attrString)
+    let changeInLength:NSInteger = (NSString(string: attrString.string).length - range.length)
+    self.edited(NSTextStorageEditActions.EditedCharacters,
+      range: range,
+      changeInLength: changeInLength)
+    endEditing()
+  }
+  
+  override func processEditing() {
+    super.processEditing()
+    NSNotificationCenter.defaultCenter().postNotificationName("textEdited", object: nil)
+  }
+  
+  
+  override func setAttributes(attrs: [String : AnyObject]!, range: NSRange) {
+    attributedStringStore.setAttributes(attrs, range: range)
+    self.edited(NSTextStorageEditActions.EditedAttributes,
+      range: range,
+      changeInLength: 0)
   }
 }

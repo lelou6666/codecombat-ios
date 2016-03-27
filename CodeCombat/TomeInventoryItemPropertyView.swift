@@ -8,7 +8,7 @@
 
 import Foundation
 
-class TomeInventoryItemPropertyView: UIView {
+class TomeInventoryItemPropertyView: UIButton {
   
   var item: TomeInventoryItem!
   var property: TomeInventoryItemProperty!
@@ -17,13 +17,14 @@ class TomeInventoryItemPropertyView: UIView {
     self.item = item
     self.property = property
     buildSubviews()
+    addTarget(self, action: Selector("onTapped:"), forControlEvents: .TouchUpInside)
   }
   
-  required init(coder aDecoder: NSCoder) {
+  required init?(coder aDecoder: NSCoder) {
     super.init(coder: aDecoder)
   }
   
-  init(item: TomeInventoryItem,
+  init?(item: TomeInventoryItem,
     property: TomeInventoryItemProperty, coder aDecoder: NSCoder!) {
     super.init(coder: aDecoder)
     baseInit(item, property: property)
@@ -36,24 +37,45 @@ class TomeInventoryItemPropertyView: UIView {
   }
   
   func buildSubviews() {
-    let Padding = CGFloat(5.0)
+    let padding = CGFloat(5.0)
     if let name = property?.propertyData["name"].asString {
-      var label = UILabel(
+      let dotLabel = UILabel(
         frame: CGRect(
-          x: Padding,
-          y: Padding,
-          width: frame.width - 2 * Padding,
+          x: padding,
+          y: padding,
+          width: 25,
           height: frame.height))
+      dotLabel.font = UIFont(name: "Menlo", size: 12)
+      dotLabel.text = " ● "
+      dotLabel.textColor = UIColor(red: 117.0 / 255.0, green: 110.0 / 255.0, blue: 90.0 / 255.0, alpha: 1.0)
+      dotLabel.sizeToFit()
+      let label = UILabel(
+        frame: CGRect(
+          x: padding + dotLabel.frame.width,
+          y: padding,
+          width: frame.width - 2 * padding - dotLabel.frame.width,
+          height: frame.height))
+      label.font = dotLabel.font
       label.text = name
-      label.textColor = UIColor.blackColor()
+      label.textColor = UIColor(red: 26.0 / 255.0, green: 20.0 / 255.0, blue: 12.0 / 255.0, alpha: 1.0)
+      addSubview(dotLabel)
       addSubview(label)
       label.sizeToFit()
       frame = CGRect(
         x: frame.origin.x,
         y: frame.origin.y,
         width: frame.width,
-        height: label.frame.height + 2 * Padding)
-      backgroundColor = UIColor(red: 0, green: 0, blue: 0, alpha: 0.1)
+        height: label.frame.height + 2 * padding)
+      backgroundColor = UIColor(red: 225.0 / 255.0, green: 219.0 / 255.0, blue: 198.0 / 255.0, alpha: 1.0)
     }
+  }
+  
+  func onTapped(sender: TomeInventoryItemView) {
+    let docView = TomeInventoryItemPropertyDocumentationView(item: item, property: property, frame: CGRect(x: 0, y: 0, width: 320, height: 480))
+    let docViewController = UIViewController()
+    docViewController.view = docView
+    let popover = UIPopoverController(contentViewController: docViewController)
+    popover.presentPopoverFromRect(frame, inView: superview!.superview!, permittedArrowDirections: [.Down, .Up], animated: true)
+    print("tapped \(self.item.name) \(self.property.name)")
   }
 }

@@ -1,0 +1,28 @@
+{
+  "images" : [
+    {
+      "idiom" : "ipad",
+      "scale" : "1x"
+    },
+    {
+      "resizing" : {
+        "mode" : "3-part-vertical",
+        "center" : {
+          "mode" : "fill",
+          "height" : 40
+        },
+        "capInsets" : {
+          "top" : 80,
+          "bottom" : 58
+        }
+      },
+      "idiom" : "ipad",
+      "filename" : "tome_item_background@2x~ipad.png",
+      "scale" : "2x"
+    }
+  ],
+  "info" : {
+    "version" : 1,
+    "author" : "xcode"
+  }
+}

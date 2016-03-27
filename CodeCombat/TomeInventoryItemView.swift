@@ -9,15 +9,19 @@
 import Foundation
 
 class TomeInventoryItemView: UIView {
-  
   var item: TomeInventoryItem!
   var showsProperties = false
+  var imageView: UIImageView?
+  let imageSize = CGFloat(75)
+  let marginH = CGFloat(10)  // Left side to image, image to prop, prop to right padding
+  let marginV = CGFloat(3)  // Between props
+  let padding = CGFloat(15)  // Top, right, and bottom padding (left padding is just a weird hack)
   
-  required init(coder aDecoder: NSCoder) {
+  required init?(coder aDecoder: NSCoder) {
     super.init(coder: aDecoder)
   }
   
-  init(item: TomeInventoryItem, coder aDecoder: NSCoder!) {
+  init?(item: TomeInventoryItem, coder aDecoder: NSCoder!) {
     self.item = item
     super.init(coder: aDecoder)
     buildSubviews()
@@ -30,51 +34,64 @@ class TomeInventoryItemView: UIView {
   }
   
   func buildSubviews() {
-    let Margin = CGFloat(3.0)
-    var y = CGFloat(0)
-    if let name = item.itemData["name"].asString {
-      
+    var y = padding
+    let itemWidth = imageSize + 2 * marginH
+    var propertyViews: [TomeInventoryItemPropertyView] = []
+    if item.itemData["name"].asString != nil {
       for property in item.properties {
         let propertyView = TomeInventoryItemPropertyView(
           item: item,
           property: property,
           frame: CGRect(
-            x: frame.width / 2.0 + Margin,
-            y: y + Margin,
-            width: frame.width / 2.0 - 2 * Margin,
+            x: itemWidth,
+            y: y + marginV,
+            width: frame.width - 2 * padding - marginH - itemWidth,
             height: 50.0))
         addSubview(propertyView)
-        y += propertyView.frame.height + Margin
+        y += propertyView.frame.height + marginV
+        propertyViews.append(propertyView)
       }
       if item.properties.count > 0 {
-        var label = UILabel(
-          frame: CGRect(
-            x: Margin,
-            y: Margin,
-            width: frame.width / 2.0 - 2 * Margin,
-            height: frame.height - 2 * Margin))
-        label.text = name
-        label.textColor = UIColor.blackColor()
-        label.sizeToFit()
-        label.frame = CGRect(
-          x: label.frame.origin.x,
-          y: CGFloat((y + Margin - label.frame.height) / 2.0),
-          width: label.frame.width,
-          height: label.frame.height)
-        addSubview(label)
         showsProperties = true
+        y += marginV + padding
+        buildItemImage()
+      }
+    }
+    let minHeight = imageSize + 2 * (marginV + padding)
+    let height = showsProperties ? max(y, minHeight) : 0
+    if y < height {
+      // Center the properties in the view.
+      for propertyView in propertyViews {
+        propertyView.frame.origin.y += (height - y) / CGFloat(propertyViews.count) / 2.0
       }
     }
     frame = CGRect(
       x: frame.origin.x,
       y: frame.origin.y,
       width: frame.width,
-      height: showsProperties ? y + Margin : 0)
-    backgroundColor = UIColor(
-      red: CGFloat(211.0/256.0),
-      green: CGFloat(191.0/256.0),
-      blue: CGFloat(129.0/256.0),
-      alpha: 1)
+      height: height)
+    let backgroundImage = UIImage(named: "tome_item_background")
+    let background = UIImageView(image: backgroundImage)
+    background.frame = CGRect(x: frame.size.width - background.frame.size.width - padding, y: 0, width: background.frame.size.width, height: frame.height)
+    insertSubview(background, atIndex: 0)
+  }
+  
+  func buildItemImage() {
+    let priority = DISPATCH_QUEUE_PRIORITY_DEFAULT
+    dispatch_async(dispatch_get_global_queue(priority, 0)) {
+      let imageData = NSData(contentsOfURL: self.item.imageURL)
+      dispatch_async(dispatch_get_main_queue()) {
+        // update some UI
+        if imageData != nil {
+          let image = UIImage(data: imageData!)
+          let y = max(self.marginV + self.padding, (self.frame.size.height - self.imageSize) / 2)
+          let imageFrame = CGRect(x: self.marginH, y: y, width: self.imageSize, height: self.imageSize)
+          self.imageView = UIImageView(frame: imageFrame)
+          self.imageView!.image = image
+          self.addSubview(self.imageView!)
+        }
+      }
+    }
   }
   
   func tomeInventoryItemPropertyAtLocation(location:CGPoint)
@@ -83,7 +100,7 @@ class TomeInventoryItemView: UIView {
       if !subview.isKindOfClass(TomeInventoryItemPropertyView) {
         continue
       }
-      let CandidateView = subview as TomeInventoryItemPropertyView
+      let CandidateView = subview as! TomeInventoryItemPropertyView
       if CandidateView.frame.contains(location) {
         return CandidateView.property
       }
